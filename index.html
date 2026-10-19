@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>路線查詢</title>
+<style>
+  :root { --bg:#f4f6f9; --card:#fff; --ink:#1d2733; --sub:#6b7785; --main:#1f6feb; --line:#e2e7ee; --hl:#e8f1ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  header { background:var(--main); color:#fff; padding:16px; text-align:center; font-size:20px; font-weight:700; letter-spacing:2px; }
+  main { max-width:480px; margin:0 auto; padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .card { background:var(--card); border-radius:12px; padding:12px 14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  label { display:block; font-size:13px; color:var(--sub); margin-bottom:6px; }
+  select { width:100%; font-size:17px; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .cal-head button { border:0; background:var(--hl); color:var(--main); font-size:18px; width:34px; height:34px; border-radius:8px; cursor:pointer; }
+  .cal-title { font-weight:600; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center; }
+  .cal-grid .dow { font-size:12px; color:var(--sub); padding:4px 0; }
+  .cal-grid .day { font-size:14px; padding:7px 0; border-radius:8px; cursor:pointer; border:0; background:none; color:var(--ink); }
+  .cal-grid .day:hover { background:var(--hl); }
+  .cal-grid .day.today { outline:1px solid var(--main); }
+  .cal-grid .day.sel { background:var(--main); color:#fff; }
+  .sec h3 { margin:0 0 8px; font-size:15px; color:var(--main); }
+  .sum { font-size:13px; color:var(--sub); margin-bottom:8px; }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-top:1px solid var(--line); }
+  .row:first-of-type { border-top:0; }
+  .time { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .no { font-size:13px; background:var(--hl); color:var(--main); padding:3px 9px; border-radius:999px; font-weight:600; }
+  .extra { font-size:12px; color:var(--sub); margin-top:2px; }
+  .empty { color:var(--sub); padding:6px 0; }
+  footer { text-align:center; font-size:12px; color:var(--sub); padding:6px 0 20px; }
+</style>
+</head>
+<body>
+<header>路線查詢</header>
+<main>
+  <div class="card">
+    <label for="stop">上車地點</label>
+    <select id="stop"></select>
+  </div>
+
+  <div class="card">
+    <div class="cal-head">
+      <button id="prev" aria-label="上個月">‹</button>
+      <span class="cal-title" id="calTitle"></span>
+      <button id="next" aria-label="下個月">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+  </div>
+
+  <div class="card">
+    <label for="hour">時段(每 1 小時)</label>
+    <select id="hour"></select>
+  </div>
+
+  <div class="card" id="result"></div>
+  <footer>時刻表資料依提供之檔案,僅供參考</footer>
+</main>
+
+<script>
+// ===== 資料:編號|地點=時間,... =====
+const RAW = `
+6901|陽明里=06:55
+6900|彰化=07:00
+6900|彰化=07:30
+6902|陽明里=07:25
+6933A|高鐵=07:30
+6900|彰化=08:40
+6933|台中=08:55
+6933A|高鐵=09:15
+6902|陽明里=09:20
+6901|陽明里=10:10
+6933A|高鐵=10:15
+6902|陽明里=10:30
+6933A|高鐵=10:50
+6901|陽明里=11:30
+6933A|高鐵=11:35
+6900|彰化=12:45
+6933|台中=12:55
+6900|彰化=13:25
+6900|彰化=13:40
+6902|陽明里=13:55
+6900|彰化=14:15
+6933A|高鐵=14:15
+6901|陽明里=14:30
+6900|彰化=15:20
+6933A|高鐵=15:30
+6900|彰化=15:40
+6901|陽明里=16:10
+6933A|高鐵=16:15
+6902|陽明里=17:13
+6900|彰化=17:15
+6900|彰化=17:30
+6933A|高鐵=17:35
+6900|彰化=17:45
+6900|彰化=17:55
+6933A|高鐵=18:15
+6900|彰化=18:20
+6901|陽明里=18:30
+6902|陽明里=18:50
+6900|彰化=19:10
+6900|彰化=19:40
+6933A|高鐵=19:50
+6900|彰化=21:10
+6900|彰化=21:30
+6933A|高鐵=21:40
+6936|高鐵=08:00,彰化=08:27,鹿港=09:05
+6936A|高鐵=08:20,鹿港=08:55
+6936A|高鐵=09:00,鹿港=09:35
+6936|高鐵=10:00,彰化=10:27,鹿港=11:05
+6936|高鐵=11:00,彰化=11:27,鹿港=12:05
+6936|高鐵=12:00,彰化=12:27,鹿港=13:05
+6936A|高鐵=13:00,鹿港=13:35
+6936|高鐵=14:00,彰化=14:27,鹿港=15:05
+6936|高鐵=15:00,彰化=15:27,鹿港=16:05
+6936|高鐵=16:00,彰化=16:27,鹿港=17:05
+6936A|高鐵=17:00,鹿港=17:35
+6936|高鐵=18:00,彰化=18:27,鹿港=19:05
+`;
+const STOPS = ["台中","高鐵","陽明里","彰化","鹿港"]; // 檔案第一列
+
+const BUSES = RAW.trim().split("\n").map(line => {
+  const [no, rest] = line.split("|");
+  const t = {};
+  rest.split(",").forEach(p => { const [s, v] = p.split("="); t[s] = v; });
+  return { no, t };
+});
+
+// ===== 元件 =====
+const $ = id => document.getElementById(id);
+const stopSel = $("stop"), hourSel = $("hour");
+STOPS.forEach(s => stopSel.add(new Option(s, s)));
+for (let h = 6; h <= 23; h++) {
+  const hh = String(h).padStart(2, "0");
+  hourSel.add(new Option(`${hh}:00 ~ ${hh}:59`, h));
+}
+
+const today = new Date();
+let selDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+let viewY = selDate.getFullYear(), viewM = selDate.getMonth();
+const WEEK = ["日","一","二","三","四","五","六"];
+const same = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+
+function drawCal() {
+  $("calTitle").textContent = `${viewY} 年 ${viewM + 1} 月`;
+  const g = $("calGrid"); g.innerHTML = "";
+  WEEK.forEach(w => { const d = document.createElement("div"); d.className = "dow"; d.textContent = w; g.appendChild(d); });
+  const first = new Date(viewY, viewM, 1).getDay();
+  const days = new Date(viewY, viewM + 1, 0).getDate();
+  for (let i = 0; i < first; i++) g.appendChild(document.createElement("div"));
+  for (let d = 1; d <= days; d++) {
+    const dt = new Date(viewY, viewM, d);
+    const b = document.createElement("button");
+    b.className = "day" + (same(dt, today) ? " today" : "") + (same(dt, selDate) ? " sel" : "");
+    b.textContent = d;
+    b.onclick = () => { selDate = dt; drawCal(); render(); };
+    g.appendChild(b);
+  }
+}
+$("prev").onclick = () => { if (--viewM < 0) { viewM = 11; viewY--; } drawCal(); };
+$("next").onclick = () => { if (++viewM > 11) { viewM = 0; viewY++; } drawCal(); };
+
+// ===== 查表 =====
+const toMin = s => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+
+function listFor(stop, hour) {
+  return BUSES
+    .filter(b => b.t[stop] && Math.floor(toMin(b.t[stop]) / 60) === hour)
+    .sort((a, b) => toMin(a.t[stop]) - toMin(b.t[stop]));
+}
+
+function section(stop, hour) {
+  const hh = String(hour).padStart(2, "0");
+  const list = hour > 23 ? [] : listFor(stop, hour);
+  let html = `<div class="sec"><h3>${hh}:00 ~ ${hh}:59</h3>`;
+  if (!list.length) html += `<div class="empty">此時段無班次</div>`;
+  list.forEach(b => {
+    const others = Object.entries(b.t).filter(([s]) => s !== stop).map(([s, v]) => `${s} ${v}`).join("、");
+    html += `<div class="row"><div><div class="time">${b.t[stop]}</div>${others ? `<div class="extra">${others}</div>` : ""}</div><span class="no">${b.no}</span></div>`;
+  });
+  return html + `</div>`;
+}
+
+function render() {
+  const stop = stopSel.value, hour = Number(hourSel.value);
+  const ds = `${selDate.getFullYear()}/${selDate.getMonth() + 1}/${selDate.getDate()}(週${WEEK[selDate.getDay()]})`;
+  $("result").innerHTML =
+    `<div class="sum">${ds}・${stop}</div>` +
+    section(stop, hour) +
+    `<div style="height:10px"></div>` +
+    (hour + 1 <= 23 ? section(stop, hour + 1) : `<div class="sec"><h3>下一時段</h3><div class="empty">已是最後時段</div></div>`);
+}
+
+stopSel.onchange = hourSel.onchange = render;
+hourSel.value = Math.min(23, Math.max(6, today.getHours()));
+drawCal(); render();
+</script>
+</body>
+</html>
