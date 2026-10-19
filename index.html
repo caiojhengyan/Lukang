@@ -28,7 +28,10 @@
   .row:first-of-type { border-top:0; }
   .time { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
   .no { font-size:13px; background:var(--hl); color:var(--main); padding:3px 9px; border-radius:999px; font-weight:600; }
-  .extra { font-size:12px; color:var(--sub); margin-top:2px; }
+  .line { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 6px; }
+  .line .time { font-size:18px; }
+  .st { font-size:13px; color:var(--sub); }
+  .arrow { color:var(--main); font-size:13px; letter-spacing:-1px; margin:0 2px; }
   .empty { color:var(--sub); padding:6px 0; }
   footer { text-align:center; font-size:12px; color:var(--sub); padding:6px 0 20px; }
 </style>
@@ -193,7 +196,7 @@ const stopSel = $("stop"), hourSel = $("hour");
 STOPS.forEach(s => stopSel.add(new Option(s, s)));
 for (let h = 6; h <= 23; h++) {
   const hh = String(h).padStart(2, "0");
-  hourSel.add(new Option(`${hh}:00 ~ ${hh}:59`, h));
+  hourSel.add(new Option(`${hh}:00`, h));
 }
 
 const today = new Date();
@@ -233,11 +236,19 @@ function listFor(stop, hour, dow) {
 function section(stop, hour, dow) {
   const hh = String(hour).padStart(2, "0");
   const list = hour > 23 ? [] : listFor(stop, hour, dow);
-  let html = `<div class="sec"><h3>${hh}:00 ~ ${hh}:59</h3>`;
+  let html = `<div class="sec"><h3>■ ${hh}:00 ~ ${hh}:59</h3>`;
   if (!list.length) html += `<div class="empty">此時段無班次</div>`;
   list.forEach(b => {
-    const others = Object.entries(b.t).filter(([s]) => s !== stop).map(([s, v]) => `${s} ${v}`).join("、");
-    html += `<div class="row"><div><div class="time">${b.t[stop]}</div>${others ? `<div class="extra">${others}</div>` : ""}</div><span class="no">${b.no}</span></div>`;
+    const dep = toMin(b.t[stop]);
+    // 之後會到的站(依時間排序)
+    const next = Object.entries(b.t)
+      .filter(([s, v]) => s !== stop && toMin(v) > dep)
+      .sort((a, c) => toMin(a[1]) - toMin(c[1]));
+    let line = `<span class="time">${b.t[stop]}</span><span class="st">(${stop})</span>`;
+    next.forEach(([s, v]) => {
+      line += `<span class="arrow">───▶</span><span class="time">${v}</span><span class="st">(${s})</span>`;
+    });
+    html += `<div class="row"><div class="line">${line}</div><span class="no">${b.no}</span></div>`;
   });
   return html + `</div>`;
 }
