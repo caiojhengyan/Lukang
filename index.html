@@ -20,18 +20,20 @@
   .cal-grid .dow { font-size:12px; color:var(--sub); padding:4px 0; }
   .cal-grid .day { font-size:14px; padding:7px 0; border-radius:8px; cursor:pointer; border:0; background:none; color:var(--ink); }
   .cal-grid .day:hover { background:var(--hl); }
+  .cal-grid .day.hol { color:#d1344b; }
   .cal-grid .day.today { outline:1px solid var(--main); }
   .cal-grid .day.sel { background:var(--main); color:#fff; }
   .sec h3 { margin:0 0 8px; font-size:15px; color:var(--main); }
-  .sum { font-size:13px; color:var(--sub); margin-bottom:8px; }
-  .row { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-top:1px solid var(--line); }
+  .sum { font-size:13px; color:var(--sub); }
+  .note { font-size:12px; color:var(--main); background:var(--hl); border-radius:6px; padding:4px 8px; margin:6px 0 10px; display:inline-block; }
+  .row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
   .row:first-of-type { border-top:0; }
+  .no { flex:0 0 62px; text-align:center; font-size:14px; background:var(--hl); color:var(--main); padding:5px 0; border-radius:999px; font-weight:700; }
+  .trip { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .stop { display:flex; flex-direction:column; align-items:center; line-height:1.25; }
   .time { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
-  .no { font-size:13px; background:var(--hl); color:var(--main); padding:3px 9px; border-radius:999px; font-weight:600; }
-  .line { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 6px; }
-  .line .time { font-size:18px; }
-  .st { font-size:13px; color:var(--sub); }
-  .arrow { color:var(--main); font-size:13px; letter-spacing:-1px; margin:0 2px; }
+  .st { font-size:12px; color:var(--sub); }
+  .arrow { color:var(--main); font-size:13px; letter-spacing:-1px; padding-bottom:14px; }
   .empty { color:var(--sub); padding:6px 0; }
   footer { text-align:center; font-size:12px; color:var(--sub); padding:6px 0 20px; }
 </style>
@@ -59,7 +61,7 @@
   </div>
 
   <div class="card" id="result"></div>
-  <footer>時刻表資料依提供之檔案,僅供參考</footer>
+  <footer>時刻表資料依提供之檔案,僅供參考<br>假日資料:政府行事曆(TaiwanCalendar)</footer>
 </main>
 
 <script>
@@ -174,8 +176,7 @@ const CSV = `編號,台中,高鐵,陽明里,彰化(三民路),彰化,鹿港,DAY
 
 // ===== 解析 =====
 const lines = CSV.trim().split("\n").map(l => l.split(","));
-const HEADER = lines[0];
-const STOPS = HEADER.slice(1, 7);          // 檔案第一列(地點)
+const STOPS = lines[0].slice(1, 7);          // 檔案第一列(地點)
 const DAYIDX = { "日":0, "一":1, "二":2, "三":3, "四":4, "五":5, "六":6 };
 
 function parseDays(s) {
@@ -190,19 +191,58 @@ const BUSES = lines.slice(1).map(c => {
   return { no: c[0], t, days: parseDays(c[7]) };
 }).filter(b => Object.keys(b.t).length);
 
+// ===== 假日資料(政府行事曆,連線取得;失敗則只以週六日判斷) =====
+const calCache = {};   // year -> { "YYYYMMDD": {isHoliday, description} } | null
+const WEEK = ["日","一","二","三","四","五","六"];
+const pad = n => String(n).padStart(2, "0");
+const key = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+
+function loadYear(y) {
+  if (y in calCache) return Promise.resolve();
+  calCache[y] = null;
+  const urls = [
+    `https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data/${y}.json`,
+    `https://cdn.jsdelivr.net/gh/imsyuan/taiwan-holidays/data/${y}.json`
+  ];
+  const tryNext = i => i >= urls.length ? Promise.resolve() :
+    fetch(urls[i]).then(r => { if (!r.ok) throw 0; return r.json(); })
+      .then(arr => { const m = {}; arr.forEach(x => m[x.date] = x); calCache[y] = m; })
+      .catch(() => tryNext(i + 1));
+  return tryNext(0);
+}
+
+function holidayInfo(d) {
+  const m = calCache[d.getFullYear()];
+  const e = m && m[key(d)];
+  if (e) return { hol: !!e.isHoliday, desc: e.description || "" };
+  const w = d.getDay();
+  return { hol: w === 0 || w === 6, desc: "" };   // 無資料:以週六日判斷
+}
+
+// 決定適用哪一天的班表
+function scheduleFor(d) {
+  const w = d.getDay(), me = holidayInfo(d);
+  if (me.hol) {
+    const use = (w === 0 || w === 6) ? w : 0;           // 平日放假 → 用假日(六、日)班表
+    return { dow: use, label: me.desc ? `假日班表(${me.desc})` : "假日班表" };
+  }
+  if (holidayInfo(addDays(d, 1)).hol) {                 // 隔天放假的上班日 → 週五班表
+    return { dow: 5, label: w === 5 ? "" : "週五班表(明日放假)" };
+  }
+  if (w === 0 || w === 6) return { dow: 1, label: "補班日(平日班表)" };
+  return { dow: w, label: "" };
+}
+
 // ===== 元件 =====
 const $ = id => document.getElementById(id);
 const stopSel = $("stop"), hourSel = $("hour");
 STOPS.forEach(s => stopSel.add(new Option(s, s)));
-for (let h = 6; h <= 23; h++) {
-  const hh = String(h).padStart(2, "0");
-  hourSel.add(new Option(`${hh}:00`, h));
-}
+for (let h = 6; h <= 23; h++) hourSel.add(new Option(`${pad(h)}:00`, h));
 
 const today = new Date();
 let selDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 let viewY = selDate.getFullYear(), viewM = selDate.getMonth();
-const WEEK = ["日","一","二","三","四","五","六"];
 const same = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
 
 function drawCal() {
@@ -215,14 +255,14 @@ function drawCal() {
   for (let d = 1; d <= days; d++) {
     const dt = new Date(viewY, viewM, d);
     const b = document.createElement("button");
-    b.className = "day" + (same(dt, today) ? " today" : "") + (same(dt, selDate) ? " sel" : "");
+    b.className = "day" + (holidayInfo(dt).hol ? " hol" : "") + (same(dt, today) ? " today" : "") + (same(dt, selDate) ? " sel" : "");
     b.textContent = d;
-    b.onclick = () => { selDate = dt; drawCal(); render(); };
+    b.onclick = () => { selDate = dt; drawCal(); refresh(); };
     g.appendChild(b);
   }
 }
-$("prev").onclick = () => { if (--viewM < 0) { viewM = 11; viewY--; } drawCal(); };
-$("next").onclick = () => { if (++viewM > 11) { viewM = 0; viewY++; } drawCal(); };
+$("prev").onclick = () => { if (--viewM < 0) { viewM = 11; viewY--; } loadYear(viewY).then(drawCal); drawCal(); };
+$("next").onclick = () => { if (++viewM > 11) { viewM = 0; viewY++; } loadYear(viewY).then(drawCal); drawCal(); };
 
 // ===== 查表 =====
 const toMin = s => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
@@ -233,39 +273,50 @@ function listFor(stop, hour, dow) {
     .sort((a, b) => toMin(a.t[stop]) - toMin(b.t[stop]));
 }
 
+const stopBox = (time, name) => `<div class="stop"><span class="time">${time}</span><span class="st">(${name})</span></div>`;
+
 function section(stop, hour, dow) {
-  const hh = String(hour).padStart(2, "0");
   const list = hour > 23 ? [] : listFor(stop, hour, dow);
-  let html = `<div class="sec"><h3>■ ${hh}:00 ~ ${hh}:59</h3>`;
+  let html = `<div class="sec"><h3>■ ${pad(hour)}:00 ~ ${pad(hour)}:59</h3>`;
   if (!list.length) html += `<div class="empty">此時段無班次</div>`;
   list.forEach(b => {
     const dep = toMin(b.t[stop]);
-    // 之後會到的站(依時間排序)
-    const next = Object.entries(b.t)
+    // 出發之後的站,只取終點(中間站不顯示)
+    const later = Object.entries(b.t)
       .filter(([s, v]) => s !== stop && toMin(v) > dep)
       .sort((a, c) => toMin(a[1]) - toMin(c[1]));
-    let line = `<span class="time">${b.t[stop]}</span><span class="st">(${stop})</span>`;
-    next.forEach(([s, v]) => {
-      line += `<span class="arrow">───▶</span><span class="time">${v}</span><span class="st">(${s})</span>`;
-    });
-    html += `<div class="row"><div class="line">${line}</div><span class="no">${b.no}</span></div>`;
+    let trip = stopBox(b.t[stop], stop);
+    if (later.length) {
+      const [s, v] = later[later.length - 1];
+      trip += `<span class="arrow">───▶</span>` + stopBox(v, s);
+    }
+    html += `<div class="row"><span class="no">${b.no}</span><div class="trip">${trip}</div></div>`;
   });
   return html + `</div>`;
 }
 
 function render() {
-  const stop = stopSel.value, hour = Number(hourSel.value), dow = selDate.getDay();
-  const ds = `${selDate.getFullYear()}/${selDate.getMonth() + 1}/${selDate.getDate()}(週${WEEK[dow]})`;
+  const stop = stopSel.value, hour = Number(hourSel.value);
+  const sch = scheduleFor(selDate);
+  const ds = `${selDate.getFullYear()}/${selDate.getMonth() + 1}/${selDate.getDate()}(週${WEEK[selDate.getDay()]})`;
   $("result").innerHTML =
     `<div class="sum">${ds}・${stop}</div>` +
-    section(stop, hour, dow) +
+    (sch.label ? `<div class="note">適用:${sch.label}</div>` : `<div style="height:8px"></div>`) +
+    section(stop, hour, sch.dow) +
     `<div style="height:10px"></div>` +
-    (hour + 1 <= 23 ? section(stop, hour + 1, dow) : `<div class="sec"><h3>下一時段</h3><div class="empty">已是最後時段</div></div>`);
+    (hour + 1 <= 23 ? section(stop, hour + 1, sch.dow) : `<div class="sec"><h3>下一時段</h3><div class="empty">已是最後時段</div></div>`);
+}
+
+// 載入選取日期(及隔天)所屬年份的假日資料後再畫面
+function refresh() {
+  const ys = new Set([selDate.getFullYear(), addDays(selDate, 1).getFullYear()]);
+  render();
+  Promise.all([...ys].map(loadYear)).then(() => { drawCal(); render(); });
 }
 
 stopSel.onchange = hourSel.onchange = render;
 hourSel.value = Math.min(23, Math.max(6, today.getHours()));
-drawCal(); render();
+drawCal(); refresh();
 </script>
 </body>
 </html>
